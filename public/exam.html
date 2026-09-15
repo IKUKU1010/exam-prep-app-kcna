@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Exam · KCNA Prep</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header>
+    <h1>KCNA <span>Exam</span></h1>
+    <div class="timer" id="timer">70:00</div>
+  </header>
+  <div class="container">
+    <div class="exam-header">
+      <div>
+        <strong id="bundle-title">Bundle —</strong>
+        <div class="hint" id="progress-text">Question 1 of 60</div>
+      </div>
+      <button class="btn btn-danger" id="submit-btn">Submit Exam</button>
+    </div>
+
+    <div class="progress-bar"><div id="progress-fill" style="width:0%"></div></div>
+
+    <div id="question-container"></div>
+
+    <div class="nav-buttons">
+      <button class="btn btn-ghost" id="prev-btn">← Previous</button>
+      <button class="btn btn-primary" id="next-btn">Next →</button>
+    </div>
+
+    <h3 style="margin-top:32px;">Question Palette</h3>
+    <div class="palette" id="palette"></div>
+  </div>
+
+  <script src="exam.js"></script>
+</body>
+</html>

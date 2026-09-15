@@ -1,0 +1,140 @@
+const params = new URLSearchParams(location.search);
+const EXAM_ID = params.get('id');
+const DURATION_SECONDS = 70 * 60;
+
+let exam, questions, currentIndex = 0;
+const answers = {}; // questionId -> letter
+let timeLeft = DURATION_SECONDS;
+let timerHandle = null;
+
+const $ = (id) => document.getElementById(id);
+
+async function load() {
+  const res = await fetch(`/api/exams/${EXAM_ID}`);
+  if (!res.ok) { document.body.innerHTML = '<div class="loading">Exam not found.</div>'; return; }
+  const data = await res.json();
+  exam = data.exam;
+  questions = data.questions;
+
+  // If previous attempt had answers, load them
+  for (const q of questions) if (q.user_answer) answers[q.id] = q.user_answer;
+
+  $('bundle-title').textContent = `Bundle ${exam.bundle_number}`;
+  renderPalette();
+  renderQuestion();
+  startTimer();
+}
+
+function startTimer() {
+  if (exam.completed_at) {
+    $('timer').textContent = 'Completed';
+    return;
+  }
+  timerHandle = setInterval(() => {
+    timeLeft--;
+    updateTimerDisplay();
+    if (timeLeft <= 0) {
+      clearInterval(timerHandle);
+      submitExam(true);
+    }
+  }, 1000);
+  updateTimerDisplay();
+}
+
+function updateTimerDisplay() {
+  const m = Math.floor(timeLeft / 60).toString().padStart(2, '0');
+  const s = (timeLeft % 60).toString().padStart(2, '0');
+  const el = $('timer');
+  el.textContent = `${m}:${s}`;
+  el.classList.remove('warn', 'danger');
+  if (timeLeft <= 60) el.classList.add('danger');
+  else if (timeLeft <= 300) el.classList.add('warn');
+}
+
+function renderQuestion() {
+  const q = questions[currentIndex];
+  const selected = answers[q.id];
+
+  $('progress-text').textContent = `Question ${currentIndex + 1} of ${questions.length}`;
+  $('progress-fill').style.width = `${((currentIndex + 1) / questions.length) * 100}%`;
+
+  const options = [
+    ['A', q.option_a], ['B', q.option_b], ['C', q.option_c],
+    ['D', q.option_d], ['E', q.option_e]
+  ].filter(([, t]) => t && t.trim());
+
+  $('question-container').innerHTML = `
+    <div class="question-card">
+      <div class="q-number">Question ${currentIndex + 1}</div>
+      <div class="q-domain">${q.domain}</div>
+      <div class="q-text">${escapeHtml(q.question)}</div>
+      <div class="options">
+        ${options.map(([letter, text]) => `
+          <div class="option ${selected === letter ? 'selected' : ''}" data-letter="${letter}">
+            <div class="option-letter">${letter}</div>
+            <div>${escapeHtml(text)}</div>
+          </div>`).join('')}
+      </div>
+    </div>
+  `;
+
+  document.querySelectorAll('.option').forEach(el => {
+    el.addEventListener('click', () => {
+      answers[q.id] = el.dataset.letter;
+      renderQuestion();
+      renderPalette();
+    });
+  });
+
+  $('prev-btn').disabled = currentIndex === 0;
+  $('next-btn').disabled = currentIndex === questions.length - 1;
+
+  renderPalette();
+}
+
+function renderPalette() {
+  $('palette').innerHTML = questions.map((q, i) => {
+    const cls = [
+      answers[q.id] ? 'answered' : '',
+      i === currentIndex ? 'current' : ''
+    ].join(' ');
+    return `<button class="${cls}" data-idx="${i}">${i + 1}</button>`;
+  }).join('');
+  document.querySelectorAll('.palette button').forEach(btn => {
+    btn.addEventListener('click', () => {
+      currentIndex = Number(btn.dataset.idx);
+      renderQuestion();
+    });
+  });
+}
+
+async function submitExam(auto = false) {
+  if (!auto) {
+    const unanswered = questions.length - Object.keys(answers).length;
+    const msg = unanswered > 0
+      ? `You have ${unanswered} unanswered question(s). Submit anyway?`
+      : 'Submit your exam?';
+    if (!confirm(msg)) return;
+  } else {
+    alert('Time is up! Your exam has been submitted automatically.');
+  }
+  clearInterval(timerHandle);
+
+  const res = await fetch(`/api/exams/${EXAM_ID}/submit`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ answers })
+  });
+  if (!res.ok) { alert('Failed to submit.'); return; }
+  location.href = `result.html?id=${EXAM_ID}`;
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+$('prev-btn').addEventListener('click', () => { if (currentIndex > 0) { currentIndex--; renderQuestion(); }});
+$('next-btn').addEventListener('click', () => { if (currentIndex < questions.length - 1) { currentIndex++; renderQuestion(); }});
+$('submit-btn').addEventListener('click', () => submitExam(false));
+
+load();
