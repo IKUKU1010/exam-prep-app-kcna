@@ -4,8 +4,9 @@ This is a KCNA Examination Preparatory application. This application was develop
 
 # Setup Instructions
 
-# Project Structure
+## Project Structure
 
+```
 exam-prep-app-kcna/
 ├── package.json
 ├── server.js              # Express server + API
@@ -18,8 +19,7 @@ exam-prep-app-kcna/
 │   ├── styles.css
 │   └── app.js
 └── kcna.db                # SQLite database (auto-created)
-
-
+```
 
 ## 1. Download the Repository
 
