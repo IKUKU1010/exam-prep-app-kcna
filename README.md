@@ -110,3 +110,39 @@ pm2 status          # should show "online", not "errored"
 pm2 logs kcna-prep --lines 20
 curl http://localhost:3000
 ```
+
+## 9. Redeploy
+
+```bash
+cd /home/harry/exam-prep-app-kcna
+```
+
+**1.** Save the updated files (overwrite).
+
+**2.** Wipe the old DB so the new schema + questions get loaded:
+
+```bash
+rm -f kcna.db kcna.db-wal kcna.db-shm
+```
+
+**3.** Stop the running app (if any):
+
+```bash
+pm2 delete kcna-prep 2>/dev/null || true
+```
+
+**4.** Rebuild and start fresh:
+
+```bash
+node db.js --reseed
+pm2 start server.js --name kcna-prep --cwd /home/harry/exam-prep-app-kcna
+pm2 save
+```
+
+**5.** Verify:
+
+```bash
+pm2 status
+pm2 logs kcna-prep --lines 30
+curl -s http://localhost:3000/api/bundles | head -c 500
+```
