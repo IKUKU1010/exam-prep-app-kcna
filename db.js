@@ -18,8 +18,9 @@ function initDb() {
       option_b TEXT NOT NULL,
       option_c TEXT NOT NULL,
       option_d TEXT NOT NULL,
-      option_e TEXT NOT NULL,
-      answer TEXT NOT NULL
+      option_e TEXT NOT NULL DEFAULT '',
+      answer TEXT NOT NULL,
+      multi_select INTEGER DEFAULT 0
     );
 
     CREATE TABLE IF NOT EXISTS exams (
@@ -47,12 +48,15 @@ function initDb() {
 
 function seedQuestions(db) {
   const count = db.prepare('SELECT COUNT(*) as c FROM questions').get().c;
-  if (count > 0) return;
+  if (count > 0) {
+    console.log(`Questions already seeded (${count} rows). Skipping.`);
+    return;
+  }
 
   const insert = db.prepare(`
     INSERT INTO questions
-    (id, domain, question, option_a, option_b, option_c, option_d, option_e, answer)
-    VALUES (@id, @domain, @question, @a, @b, @c, @d, @e, @answer)
+    (id, domain, question, option_a, option_b, option_c, option_d, option_e, answer, multi_select)
+    VALUES (@id, @domain, @question, @a, @b, @c, @d, @e, @answer, 0)
   `);
 
   const tx = db.transaction((rows) => {
@@ -76,64 +80,93 @@ function seedQuestions(db) {
 }
 
 /**
- * Build 5 exam bundles, each with 60 questions, weighted by KCNA blueprint.
+ * Build 12 exam bundles, each with 60 questions, weighted by KCNA blueprint.
  * Scoring: 1000 total points; pass mark = 850 (85%).
  * Distribution per bundle:
  *   K8s Fundamentals: 18, Container Orchestration: 12,
  *   Cloud Native Architecture: 12, Observability: 9, Delivery: 9  => 60
  */
+const NUM_BUNDLES = 12;
+const QUESTIONS_PER_BUNDLE = 60;
+const DISTRIBUTION = {
+  "Kubernetes Fundamentals": 18,
+  "Container Orchestration": 12,
+  "Cloud Native Architecture": 12,
+  "Cloud Native Observability": 9,
+  "Cloud Native Application Delivery": 9
+};
+
 function buildExamBundles(db) {
   const existing = db.prepare('SELECT COUNT(*) as c FROM exams').get().c;
-  if (existing > 0) return;
-
-  const DISTRIBUTION = {
-    "Kubernetes Fundamentals": 18,
-    "Container Orchestration": 12,
-    "Cloud Native Architecture": 12,
-    "Cloud Native Observability": 9,
-    "Cloud Native Application Delivery": 9
-  };
-
-  const byDomain = {};
-  for (const q of db.prepare('SELECT id, domain FROM questions').all()) {
-    (byDomain[q.domain] ||= []).push(q.id);
+  if (existing > 0) {
+    console.log(`Exams already exist (${existing}). Skipping.`);
+    return;
   }
 
-  const createExam = db.prepare('INSERT INTO exams (bundle_number, total) VALUES (?, 60)');
+  // Load all questions grouped by domain
+  const byDomain = {};
+  for (const row of db.prepare('SELECT id, domain FROM questions').all()) {
+    (byDomain[row.domain] ||= []).push(row.id);
+  }
+
+  // For non-overlapping bundles across 12 exams, we need
+  // per-domain count * NUM_BUNDLES unique questions.
+  for (const [domain, perBundle] of Object.entries(DISTRIBUTION)) {
+    const need = perBundle * NUM_BUNDLES;
+    const have = (byDomain[domain] || []).length;
+    if (have < need) {
+      throw new Error(
+        `Not enough unique questions in "${domain}" for ${NUM_BUNDLES} non-overlapping bundles. ` +
+        `Need ${need}, have ${have}.`
+      );
+    }
+  }
+
+  // Shuffle the pool per domain once, then slice sequentially — this guarantees
+  // no question is reused across bundles.
+  const shuffledByDomain = {};
+  for (const [domain, ids] of Object.entries(byDomain)) {
+    shuffledByDomain[domain] = [...ids].sort(() => Math.random() - 0.5);
+  }
+
+  const createExam = db.prepare('INSERT INTO exams (bundle_number, total) VALUES (?, ?)');
   const linkQ = db.prepare('INSERT INTO exam_questions (exam_id, question_id, position) VALUES (?, ?, ?)');
 
   const tx = db.transaction(() => {
-    for (let bundle = 1; bundle <= 5; bundle++) {
-      const info = createExam.run(bundle);
-      const examId = info.lastInsertRowid;
-      let pos = 1;
-      const used = new Set();
+    // Track cursor per domain
+    const cursors = {};
+    for (const d of Object.keys(DISTRIBUTION)) cursors[d] = 0;
 
-      for (const [domain, count] of Object.entries(DISTRIBUTION)) {
-        const pool = [...byDomain[domain]].sort(() => Math.random() - 0.5);
-        let picked = 0;
-        for (const qid of pool) {
-          if (picked >= count) break;
-          if (used.has(qid)) continue;
-          used.add(qid);
-          linkQ.run(examId, qid, pos++);
-          picked++;
-        }
-        if (picked < count) {
-          throw new Error(`Not enough questions in domain ${domain} (need ${count}, have ${pool.length})`);
-        }
+    for (let bundle = 1; bundle <= NUM_BUNDLES; bundle++) {
+      const info = createExam.run(bundle, QUESTIONS_PER_BUNDLE);
+      const examId = info.lastInsertRowid;
+
+      // Build this bundle's question list
+      const bundleQuestions = [];
+      for (const [domain, perBundle] of Object.entries(DISTRIBUTION)) {
+        const pool = shuffledByDomain[domain];
+        const start = cursors[domain];
+        bundleQuestions.push(...pool.slice(start, start + perBundle));
+        cursors[domain] += perBundle;
       }
+
+      // Shuffle the final bundle so domains are interleaved
+      const shuffled = [...bundleQuestions].sort(() => Math.random() - 0.5);
+
+      // Insert with position 1..60
+      shuffled.forEach((qid, i) => linkQ.run(examId, qid, i + 1));
     }
   });
 
   tx();
-  console.log('Created 5 exam bundles x 60 questions each.');
+  console.log(`Created ${NUM_BUNDLES} exam bundles × ${QUESTIONS_PER_BUNDLE} questions each.`);
 }
 
 if (require.main === module) {
   const db = initDb();
   if (process.argv.includes('--reseed')) {
     db.exec('DELETE FROM exam_questions; DELETE FROM exams; DELETE FROM questions;');
+    console.log('Cleared existing data.');
   }
   seedQuestions(db);
   buildExamBundles(db);
